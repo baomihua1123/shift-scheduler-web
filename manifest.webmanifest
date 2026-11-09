@@ -1,0 +1,16 @@
+{
+  "name": "短期活動排班系統",
+  "short_name": "排班系統",
+  "description": "短期活動攝影、導播人員的自動排班工具（資料存放在您自己的電腦）",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7f5",
+  "theme_color": "#2f6f4e",
+  "lang": "zh-Hant-TW",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
