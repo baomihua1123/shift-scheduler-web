@@ -75,3 +75,55 @@ dialog .dlg-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 
 .empty { padding: 30px; text-align: center; color: var(--muted); }
 .backup-list { width: 100%; border-collapse: collapse; }
 .backup-list td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+
+/* ---------- 活動專案 ---------- */
+.split { display: flex; gap: 18px; align-items: flex-start; }
+.sidebar { width: 280px; flex: none; }
+.main-panel { flex: 1; min-width: 0; }
+.event-item { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; margin-bottom: 8px; cursor: pointer; }
+.event-item:hover { background: #f1f6f3; }
+.event-item.selected { border-color: var(--green); background: #e8f3d8; }
+.event-item .name { font-weight: 600; }
+.event-item .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.status-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: #e3ede7; margin-left: 6px; }
+.status-chip.scheduled { background: #d6ecff; }
+.status-chip.final { background: #ffe7b8; }
+.subtabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.subtab { padding: 8px 18px; border: 1px solid var(--line); border-radius: 8px 8px 0 0; background: #eef3f0; cursor: pointer; }
+.subtab.active { background: #fff; border-bottom-color: #fff; font-weight: 600; color: var(--green-dark); }
+.subtab:disabled { opacity: .5; cursor: not-allowed; }
+.form-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.form-row > label.field { flex: 1; min-width: 200px; }
+input[type=number], input[type=date], input[type=time] { padding: 7px 8px; border: 1px solid #b9c4bd; border-radius: 6px; background: #fff; }
+table.form-table { width: 100%; border-collapse: collapse; }
+table.form-table th, table.form-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+table.form-table th { font-size: 14px; color: var(--muted); font-weight: 600; }
+.attendees { columns: 2; column-gap: 24px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; background: #fff; }
+.attendees label { display: flex; align-items: center; gap: 8px; padding: 4px 0; break-inside: avoid; cursor: pointer; }
+.attendees .sub { color: var(--muted); font-size: 13px; }
+.sticky-actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 6px; }
+.notice { padding: 10px 14px; border-radius: 8px; background: #fff4d6; color: #5b3b00; margin-bottom: 14px; }
+.notice.info { background: #e8f1fb; color: #1d3f63; }
+.daytabs { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+.daytab { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; cursor: pointer; }
+.daytab.active { background: var(--green); color: #fff; border-color: var(--green); }
+.scroll-x { overflow-x: auto; }
+table.sched { border-collapse: collapse; background: #fff; min-width: 480px; }
+table.sched th, table.sched td { border: 1px solid #222; padding: 8px 14px; text-align: center; font-family: "DFKai-SB", "標楷體", "Kaiti TC", serif; font-size: 17px; min-width: 96px; }
+table.sched th.corner { text-decoration: underline; }
+table.sched tr.alt td { background: #c5e0b4; }
+table.sched tr.break td { background: #d9d9d9; }
+table.sched td.bad { background: #f8cbaa !important; }
+table.sched td.locked { box-shadow: inset 0 0 0 2px #e0a800; }
+table.stats { border-collapse: collapse; background: #fff; }
+table.stats th, table.stats td { border: 1px solid var(--line); padding: 6px 12px; text-align: center; }
+table.stats th { background: #eaf2ec; }
+table.stats tr.total td, table.stats tr.total th { font-weight: 700; background: #f4f7f5; }
+.issues { list-style: none; padding: 0; margin: 0; }
+.issues li { padding: 4px 0; }
+.issues .err { color: var(--danger); }
+.issues .warn { color: var(--warn); }
+.issues .ok { color: #1d6b3a; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #b9c4bd; border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 900px) { .split { flex-direction: column; } .sidebar { width: 100%; } .attendees { columns: 1; } }

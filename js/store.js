@@ -1,4 +1,6 @@
 // 資料模型與自動存檔。不依賴瀏覽器 API（儲存層以參數注入），所以可以在 Node 中測試。
+import { validateEvent, layoutSignature, sortedDays, addDays, daysBetween } from './event-model.js';
+
 export const SCHEMA_VERSION = 1;
 export const APP_TAG = 'shift-scheduler';
 
@@ -272,5 +274,130 @@ export class Store {
     this.data.staff = this.data.staff.filter((x) => x.id !== id);
     this.commit();
     return 'deleted';
+  }
+
+  // ---------- 活動 ----------
+  events() {
+    const first = (ev) => (ev.days.length ? sortedDays(ev)[0].date : '9999-99-99');
+    return this.data.events.slice().sort((a, b) => (first(a) < first(b) ? 1 : first(a) > first(b) ? -1 : b.id - a.id));
+  }
+  getEvent(id) { return this.data.events.find((e) => e.id === id) || null; }
+
+  // 儲存前預覽：回傳 { layoutChanged, hasAssignments }，供畫面在會清除班表時先提醒
+  previewSaveEvent(draft) {
+    if (draft.id === null || draft.id === undefined) return { layoutChanged: false, hasAssignments: false };
+    const old = this.getEvent(draft.id);
+    if (!old) return { layoutChanged: false, hasAssignments: false };
+    return {
+      layoutChanged: layoutSignature(old) !== layoutSignature(draft),
+      hasAssignments: Object.keys(old.assignments || {}).length > 0,
+    };
+  }
+
+  saveEvent(draft) {
+    validateEvent(draft);
+    const nowIso = this.now().toISOString();
+    const days = sortedDays(draft).map((d) => ({
+      date: d.date, start: d.start, end: d.end,
+      breaks: (d.breaks || []).map((b) => ({ label: (b.label || '').trim() || '休息', start: b.start, end: b.end })),
+    }));
+    const order = new Map(this.positions({ includeInactive: true }).map((p, i) => [p.id, i]));
+    const positions = draft.positions
+      .map((p) => ({ positionId: p.positionId, headcount: Number(p.headcount), dedicated: p.dedicated === true ? true : p.dedicated === false ? false : null }))
+      .sort((a, b) => (order.get(a.positionId) ?? 0) - (order.get(b.positionId) ?? 0));
+    const staffIds = [...new Set(draft.staffIds)].sort((a, b) => a - b);
+    const base = {
+      name: String(draft.name).trim(), note: String(draft.note || '').trim(),
+      shiftMinutes: Number(draft.shiftMinutes), mergeThreshold: draft.mergeThreshold ?? 0.5,
+      avoidConsecutive: Boolean(draft.avoidConsecutive), days, positions, staffIds,
+    };
+
+    if (draft.id === null || draft.id === undefined) {
+      const id = ++this.data.seq.event;
+      this.data.events.push({
+        id, ...base, status: 'draft', assignments: {}, lastGeneration: null,
+        copiedFrom: draft.copiedFrom ?? null, createdAt: nowIso, updatedAt: nowIso,
+      });
+      this.commit();
+      return { id, layoutChanged: false, pruned: 0 };
+    }
+
+    const ev = this.getEvent(draft.id);
+    if (!ev) throw new Error('找不到這個活動');
+    if (ev.status === 'final') throw new Error('此活動已定稿，請先「解除定稿」才能修改設定');
+    const layoutChanged = layoutSignature(ev) !== layoutSignature({ ...base });
+    Object.assign(ev, base, { updatedAt: nowIso });
+    let pruned = 0;
+    if (layoutChanged) {
+      pruned = Object.keys(ev.assignments || {}).length;
+      ev.assignments = {};
+      ev.lastGeneration = null;
+    } else {
+      const posHead = new Map(positions.map((p) => [p.positionId, p.headcount]));
+      const staffSet = new Set(staffIds);
+      for (const [key, a] of Object.entries(ev.assignments || {})) {
+        const [, , pid, k] = key.split('|');
+        if (!posHead.has(Number(pid)) || Number(k) >= posHead.get(Number(pid)) || !staffSet.has(a.staffId)) {
+          delete ev.assignments[key];
+          pruned += 1;
+        }
+      }
+    }
+    this._refreshStatus(ev);
+    this.commit();
+    return { id: ev.id, layoutChanged, pruned };
+  }
+
+  _refreshStatus(ev) {
+    if (ev.status === 'final') return;
+    ev.status = Object.keys(ev.assignments || {}).length ? 'scheduled' : 'draft';
+  }
+
+  deleteEvent(id) {
+    this.data.events = this.data.events.filter((e) => e.id !== id);
+    this.commit();
+  }
+
+  // 複製過往活動的設定（不含班表）；startDate 有給時整體平移日期
+  duplicateEvent(id, newName, startDate = null) {
+    const src = this.getEvent(id);
+    if (!src) throw new Error('找不到要複製的活動');
+    const days = sortedDays(src);
+    const offset = startDate && days.length ? daysBetween(days[0].date, startDate) : 0;
+    return this.saveEvent({
+      id: null, name: newName, note: src.note, shiftMinutes: src.shiftMinutes, mergeThreshold: src.mergeThreshold,
+      avoidConsecutive: src.avoidConsecutive, copiedFrom: src.id,
+      days: days.map((d) => ({ date: addDays(d.date, offset), start: d.start, end: d.end, breaks: d.breaks.map((b) => ({ ...b })) })),
+      positions: src.positions.map((p) => ({ ...p })),
+      staffIds: [...src.staffIds],
+    }).id;
+  }
+
+  // 套用排班結果：assignments 為 { 'YYYY-MM-DD|HH:MM|崗位id|第幾位': 人員id }；已鎖定的格子保留
+  applyGeneration(id, assignments, info = null) {
+    const ev = this.getEvent(id);
+    if (!ev) throw new Error('找不到這個活動');
+    if (ev.status === 'final') throw new Error('此活動已定稿，請先「解除定稿」才能重新排班');
+    const next = {};
+    for (const [key, a] of Object.entries(ev.assignments || {})) if (a && a.locked) next[key] = a;
+    for (const [key, staffId] of Object.entries(assignments)) if (!next[key]) next[key] = { staffId, locked: false };
+    ev.assignments = next;
+    ev.lastGeneration = info ? { at: this.now().toISOString(), warnings: info.warnings || [], notes: info.notes || [] } : null;
+    ev.updatedAt = this.now().toISOString();
+    this._refreshStatus(ev);
+    this.commit();
+  }
+
+  clearAssignments(id, keepLocked = false) {
+    const ev = this.getEvent(id);
+    if (!ev) return;
+    if (ev.status === 'final') throw new Error('此活動已定稿，請先「解除定稿」才能清除班表');
+    ev.assignments = keepLocked
+      ? Object.fromEntries(Object.entries(ev.assignments || {}).filter(([, a]) => a && a.locked))
+      : {};
+    ev.lastGeneration = null;
+    ev.updatedAt = this.now().toISOString();
+    this._refreshStatus(ev);
+    this.commit();
   }
 }

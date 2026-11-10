@@ -1,6 +1,6 @@
 // Service Worker：讓程式安裝後可離線開啟，並在有新版本時通知使用者。
 // 每次更新程式時，請同時修改這裡的 VERSION 與 js/version.js（兩邊必須一致）。
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CACHE = `shift-scheduler-${VERSION}`;
 const ASSETS = [
   './',
@@ -12,6 +12,10 @@ const ASSETS = [
   './js/util.js',
   './js/idb.js',
   './js/store.js',
+  './js/timeslots.js',
+  './js/engine.js',
+  './js/engine-worker.js',
+  './js/event-model.js',
   './js/folder-storage.js',
   './js/ui/dialog.js',
   './js/ui/status.js',

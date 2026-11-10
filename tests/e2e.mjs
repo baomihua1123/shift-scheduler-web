@@ -91,14 +91,14 @@ await step('第一次開啟顯示「選擇資料夾」引導', async () => {
 
 await step('選擇資料夾後進入主畫面並自動建立資料檔', async () => {
   await page.getByRole('button', { name: '選擇資料夾' }).click();
-  await page.getByRole('button', { name: '設定' }).waitFor();
+  await page.getByRole('button', { name: '設定', exact: true }).waitFor();
   await waitSaved();
   const data = JSON.parse(await readOpfs(page, 'data1/排班資料.json'));
   assert.equal(data.app, 'shift-scheduler');
 });
 
 await step('新增崗位、調整順序，並自動寫入資料夾', async () => {
-  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '設定', exact: true }).click();
   await addPosition('導播', '主控');
   await addPosition('攝影');
   await addPosition('中特');
@@ -159,16 +159,16 @@ await step('每次開啟會自動備份；內容沒變就不重複備份', async
   let backups = await listOpfs(page, 'data1/備份');
   assert.equal(backups.length, 1, `備份數 ${backups.length}`);
   await page.reload();
-  await page.getByRole('button', { name: '設定' }).waitFor();
+  await page.getByRole('button', { name: '設定', exact: true }).waitFor();
   assert.equal((await listOpfs(page, 'data1/備份')).length, 1);
-  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '設定', exact: true }).click();
   await page.getByRole('button', { name: '還原此備份' }).first().waitFor();
   await page.screenshot({ path: join(shots, '04-backups.png') });
   await page.getByRole('button', { name: '人員管理' }).click();
   await addStaff('臨時人員', []);
   await waitSaved();
   await page.reload();
-  await page.getByRole('button', { name: '設定' }).waitFor();
+  await page.getByRole('button', { name: '設定', exact: true }).waitFor();
   backups = await listOpfs(page, 'data1/備份');
   assert.equal(backups.length, 2);
 });
@@ -181,7 +181,7 @@ await step('同時開兩個視窗會被擋下，避免互相覆蓋', async () =>
 });
 
 await step('資料夾內容被其他電腦更改時，顯示衝突並可重新載入', async () => {
-  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '設定', exact: true }).click();
   const data = JSON.parse(await readOpfs(page, 'data1/排班資料.json'));
   data.revision += 10;
   data.positions.push({ id: 99, name: '外來崗位', note: '', active: true, order: 99 });
@@ -242,7 +242,7 @@ await step('PWA：已註冊 Service Worker，離線也能開啟並讀到資料',
   // 等快取完成後再離線
   await page.waitForFunction(async () => (await caches.keys()).length > 0);
   await page.reload(); // 讓 SW 接管頁面
-  await page.getByRole('button', { name: '設定' }).waitFor();
+  await page.getByRole('button', { name: '設定', exact: true }).waitFor();
   await context.setOffline(true);
   await page.reload();
   await page.getByRole('button', { name: '人員管理' }).waitFor();
