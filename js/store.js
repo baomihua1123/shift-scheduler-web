@@ -1,5 +1,8 @@
 // 資料模型與自動存檔。不依賴瀏覽器 API（儲存層以參數注入），所以可以在 Node 中測試。
-import { validateEvent, layoutSignature, sortedDays, addDays, daysBetween } from './event-model.js';
+import {
+  validateEvent, layoutSignature, sortedDays, addDays, daysBetween, newEventDraft, eventLayout, assignmentKey,
+  analyzeEvent, buildView, buildMeta,
+} from './event-model.js';
 
 export const SCHEMA_VERSION = 1;
 export const APP_TAG = 'shift-scheduler';
@@ -53,6 +56,9 @@ export class Store {
   constructor(storage, opts = {}) {
     this.storage = storage;
     this.debounceMs = opts.debounceMs ?? 150;
+    this.retryMs = opts.retryMs ?? 1500;
+    this._retries = 0;
+    this._retryTimer = null;
     this.now = opts.now || (() => new Date());
     this.shadow = opts.shadow || null;
     this.data = emptyData();
@@ -109,6 +115,7 @@ export class Store {
       const rev = this.data.revision;
       try {
         await this.storage.save(this.data);
+        this._retries = 0;
         this._setStatus('saved', this.data.savedAt);
         this._shadowWrite(this.data.revision !== rev);
       } catch (e) {
@@ -117,6 +124,12 @@ export class Store {
           this._setStatus('conflict', null, e.message);
         } else {
           this._setStatus('error', null, (e && e.message) || String(e));
+          // 檔案暫時被占用（例如雲端同步正在讀取）時，自動再試幾次
+          if (this._retries < 3) {
+            this._retries += 1;
+            clearTimeout(this._retryTimer);
+            this._retryTimer = setTimeout(() => { this.flush().catch(() => {}); }, this.retryMs);
+          }
         }
         return;
       }
@@ -124,7 +137,7 @@ export class Store {
     }
   }
 
-  retry() { return this.flush(); }
+  retry() { this._retries = 0; return this.flush(); }
 
   _shadowWrite(dirty) {
     if (!this.shadow) return;
@@ -399,5 +412,136 @@ export class Store {
     ev.updatedAt = this.now().toISOString();
     this._refreshStatus(ev);
     this.commit();
+  }
+
+  // ---------- 班表手動調整、鎖定、定稿 ----------
+  _editableEvent(id) {
+    const ev = this.getEvent(id);
+    if (!ev) throw new Error('找不到這個活動');
+    if (ev.status === 'final') throw new Error('此活動已定稿，請先「解除定稿」才能修改班表');
+    return ev;
+  }
+
+  // key 為 'YYYY-MM-DD|HH:MM|崗位id|第幾位'；staffId 為 null 代表清空
+  setAssignment(id, key, staffId) {
+    const ev = this._editableEvent(id);
+    if (staffId === null || staffId === undefined || staffId === '') delete ev.assignments[key];
+    else {
+      const old = ev.assignments[key];
+      ev.assignments[key] = { staffId: Number(staffId), locked: old ? Boolean(old.locked) : false };
+    }
+    ev.updatedAt = this.now().toISOString();
+    this._refreshStatus(ev);
+    this.commit();
+  }
+
+  toggleLock(id, key) {
+    const ev = this._editableEvent(id);
+    const a = ev.assignments[key];
+    if (!a) throw new Error('這個格子還沒有安排人員，無法鎖定');
+    a.locked = !a.locked;
+    ev.updatedAt = this.now().toISOString();
+    this.commit();
+    return a.locked;
+  }
+
+  finalizeEvent(id) {
+    const ev = this.getEvent(id);
+    if (!ev) throw new Error('找不到這個活動');
+    if (ev.status === 'final') return;
+    if (!Object.keys(ev.assignments || {}).length) throw new Error('還沒有排班，無法定稿');
+    const { an } = analyzeEvent(this, ev);
+    if (an.errors.length) throw new Error(`班表仍有 ${an.errors.length} 個問題，無法定稿：\n${an.errors.slice(0, 8).join('\n')}`);
+    ev.snapshot = { at: this.now().toISOString(), view: JSON.parse(JSON.stringify(buildView(this, ev))), meta: buildMeta(this, ev) };
+    ev.status = 'final';
+    ev.updatedAt = this.now().toISOString();
+    this.commit();
+  }
+
+  unfinalizeEvent(id) {
+    const ev = this.getEvent(id);
+    if (!ev) return;
+    delete ev.snapshot;
+    ev.status = 'scheduled';
+    this._refreshStatus(ev);
+    ev.updatedAt = this.now().toISOString();
+    this.commit();
+  }
+
+  // ---------- 匯入 ----------
+  _findPositionByName(name) { return this.data.positions.find((p) => p.name === name) || null; }
+  _findStaffByName(name) { return this.data.staff.find((p) => p.name === name) || null; }
+
+  _ensurePosition(name, warnings) {
+    let p = this._findPositionByName(name);
+    if (!p) { const id = this.addPosition(name); p = this.getPosition(id); warnings.push(`已自動新增崗位「${name}」`); }
+    else if (!p.active) this.setPositionActive(p.id, true);
+    return p.id;
+  }
+
+  /** rows：[{ name, positions:[崗位名稱], note }]。同名者更新適用崗位；沒有的崗位會自動新增。 */
+  importStaffRows(rows) {
+    const rep = { added: 0, updated: 0, warnings: [] };
+    for (const row of rows) {
+      const name = String(row.name || '').trim();
+      if (!name) continue;
+      const pids = [...new Set(row.positions.map((n) => this._ensurePosition(n.trim(), rep.warnings)))];
+      const ex = this._findStaffByName(name);
+      if (ex) {
+        this.updateStaff(ex.id, { name, positionIds: pids, note: row.note || ex.note });
+        if (!ex.active) this.setStaffActive(ex.id, true);
+        rep.updated += 1;
+      } else { this.addStaff({ name, positionIds: pids, note: row.note || '' }); rep.added += 1; }
+    }
+    return rep;
+  }
+
+  /** imp：excel-io 的 readEventWorkbook 結果。回傳 { id, warnings }。 */
+  importEvent(imp) {
+    const warnings = [...(imp.warnings || [])];
+    const meta = imp.meta;
+    const posIds = new Map();
+    for (const pm of meta.positions || []) posIds.set(pm.name, this._ensurePosition(pm.name, warnings));
+
+    const staffIds = new Map();
+    for (const am of meta.attendees || []) {
+      let st = this._findStaffByName(am.name);
+      if (!st) {
+        if (imp.source !== 'package') { warnings.push(`人員「${am.name}」不在人員名單中，已略過（請先到「人員管理」新增）`); continue; }
+        const qual = (am.positions || []).map((n) => this._ensurePosition(n, warnings));
+        st = this.getStaff(this.addStaff({ name: am.name, positionIds: qual }));
+        warnings.push(`已自動新增人員「${am.name}」`);
+      } else if (!st.active) this.setStaffActive(st.id, true);
+      staffIds.set(am.name, st.id);
+    }
+
+    let name = meta.name || '匯入的活動';
+    const names = new Set(this.data.events.map((e) => e.name));
+    if (names.has(name)) { let n = 2; while (names.has(`${name} (${n})`)) n += 1; name = `${name} (${n})`; }
+
+    const draft = newEventDraft(meta.days && meta.days[0] ? meta.days[0].date : '2000-01-01');
+    Object.assign(draft, {
+      name, note: meta.note || '', shiftMinutes: Number(meta.shiftMinutes || 90), mergeThreshold: meta.mergeThreshold ?? 0.5,
+      days: (meta.days || []).map((d) => ({ date: d.date, start: d.start, end: d.end, breaks: (d.breaks || []).map((b) => ({ label: b.label || '休息', start: b.start, end: b.end })) })),
+      positions: (meta.positions || []).map((pm) => ({ positionId: posIds.get(pm.name), headcount: Number(pm.headcount || 1), dedicated: pm.dedicated ?? null })),
+      staffIds: [...new Set(staffIds.values())],
+    });
+    const id = this.saveEvent(draft).id;
+    const ev = this.getEvent(id);
+
+    const ends = new Map(eventLayout(ev).slots.map((s) => [`${s.date}|${s.start}`, s.end]));
+    const head = new Map(ev.positions.map((p) => [p.positionId, p.headcount]));
+    for (const a of imp.assignments || []) {
+      const end = ends.get(`${a.date}|${a.start}`);
+      if (end === undefined || end !== a.end) { warnings.push(`找不到對應的班次：${a.date} ${a.start}~${a.end}，已略過`); continue; }
+      const pid = posIds.get(a.position);
+      if (pid === undefined || !(Number(a.k) < head.get(pid))) continue;
+      const sid = staffIds.get(a.staff);
+      if (sid === undefined) { warnings.push(`${a.date} ${a.start} 「${a.position}」的人員「${a.staff}」無法對應，已留空`); continue; }
+      ev.assignments[assignmentKey(a.date, a.start, pid, Number(a.k))] = { staffId: sid, locked: false };
+    }
+    this._refreshStatus(ev);
+    this.commit();
+    return { id, warnings };
   }
 }

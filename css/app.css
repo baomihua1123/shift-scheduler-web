@@ -111,7 +111,7 @@ table.form-table th { font-size: 14px; color: var(--muted); font-weight: 600; }
 table.sched { border-collapse: collapse; background: #fff; min-width: 480px; }
 table.sched th, table.sched td { border: 1px solid #222; padding: 9px 16px; text-align: center; font-size: 19px; min-width: 104px; background: #ffffff; }
 table.sched th.corner { text-decoration: underline; }
-table.sched tr.alt td { background: #99ffcc; }
+table.sched tr.alt td { background: #ebf1de; }
 table.sched tr.break td { background: #d9d9d9; }
 table.sched td.bad { background: #f8cbaa !important; }
 table.sched td.locked { box-shadow: inset 0 0 0 2px #e0a800; }
@@ -121,9 +121,20 @@ table.stats th { background: #eaf2ec; }
 table.stats tr.total td, table.stats tr.total th { font-weight: 700; background: #f4f7f5; }
 .issues { list-style: none; padding: 0; margin: 0; }
 .issues li { padding: 4px 0; }
-.issues .err { color: var(--danger); }
-.issues .warn { color: var(--warn); }
+.issues .err, .issues .warn { color: #ff0000; }
 .issues .ok { color: #1d6b3a; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #b9c4bd; border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) { .split { flex-direction: column; } .sidebar { width: 100%; } .attendees { columns: 1; } }
+
+/* ---------- 班表可編輯格 ---------- */
+table.sched td.cell { padding: 4px 6px; }
+.cellwrap { display: flex; align-items: center; gap: 4px; }
+table.sched select { flex: 1; min-width: 88px; font: inherit; font-size: 19px; border: 0; background: transparent; text-align: center; text-align-last: center; padding: 4px 2px; cursor: pointer; appearance: none; -webkit-appearance: none; }
+table.sched select:hover { background: rgba(255,255,255,.55); }
+.lockbtn { border: 0; background: transparent; cursor: pointer; font-size: 15px; padding: 2px; opacity: .55; }
+.lockbtn:hover:not(:disabled) { opacity: 1; }
+.lockbtn.on { opacity: 1; }
+.lockbtn:disabled { opacity: .15; cursor: default; }
+.legend { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+.legend .sw { display: inline-block; width: 12px; height: 12px; border: 1px solid #999; vertical-align: -1px; margin: 0 4px 0 10px; }

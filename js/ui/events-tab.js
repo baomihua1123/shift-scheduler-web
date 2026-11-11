@@ -3,10 +3,11 @@ import { h } from '../util.js';
 import { openDialog, confirmDialog, alertDialog } from './dialog.js';
 import {
   STATUS_LABELS, DEDICATED_CHOICES, newEventDraft, cloneEvent, validateEvent, buildProblem, engineToAssignments,
-  assignmentsToEngine, buildView, viewStats, sortedDays, assignmentKey, addDays,
+  viewOf, metaOf, analyzeEvent, candidatesFor, viewStats, sortedDays, assignmentKey, addDays,
 } from '../event-model.js';
-import { analyze } from '../engine.js';
 import { dateLabel } from '../timeslots.js';
+import { exportSchedule, readEventWorkbook } from '../excel-io.js';
+import { downloadBytes, pickFile, safeFilename, XLSX_MIME } from './files.js';
 
 const ui = {
   selectedId: null,   // 已儲存活動的 id
@@ -183,6 +184,53 @@ export function renderEventsTab(container, ctx) {
     refresh();
   }
 
+  async function importEvent() {
+    if (!(await confirmDiscard())) return;
+    const file = await pickFile('.xlsx');
+    if (!file) return;
+    try {
+      const imp = await readEventWorkbook(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.xlsx$/i, ''));
+      const { id, warnings } = store.importEvent(imp);
+      ui.creating = false; ui.selectedId = id; ui.dirty = false; ui.draft = null; ui.dayTab = 0;
+      ui.sub = Object.keys(store.getEvent(id).assignments).length ? 'schedule' : 'settings';
+      refresh();
+      await alertDialog('已匯入並建立新的活動。' + (warnings.length ? `\n\n提醒：\n${warnings.slice(0, 15).join('\n')}` : ''), '匯入完成');
+    } catch (e) { await alertDialog(`無法匯入：${e.message}`, '匯入失敗'); }
+  }
+
+  async function exportExcel() {
+    if (!savedEvent) return;
+    const ev = store.getEvent(savedEvent.id);
+    if (ev.status !== 'final') {
+      const { an } = analyzeEvent(store, ev);
+      if (an.errors.length) {
+        const ok = await confirmDialog(`目前班表有 ${an.errors.length} 個問題（例如空格或資格不符），仍要匯出嗎？`, { title: '班表尚有問題', okLabel: '仍要匯出' });
+        if (!ok) return;
+      }
+    }
+    try {
+      const bytes = exportSchedule(viewOf(store, ev), metaOf(store, ev));
+      downloadBytes(`${safeFilename(ev.name)}.xlsx`, bytes, XLSX_MIME);
+    } catch (e) { await alertDialog(`匯出失敗：${e.message}`, '匯出失敗'); }
+  }
+
+  async function toggleFinal() {
+    if (!savedEvent) return;
+    try {
+      if (savedEvent.status === 'final') {
+        const ok = await confirmDialog('解除定稿後可再次修改設定與班表。確定嗎？', { title: '解除定稿', okLabel: '解除定稿' });
+        if (!ok) return;
+        store.unfinalizeEvent(savedEvent.id);
+      } else {
+        const ok = await confirmDialog('定稿會保存目前班表的快照（之後人員或崗位改名也不影響這份紀錄），並鎖定不可修改。\n確定要定稿嗎？', { title: '定稿', okLabel: '定稿' });
+        if (!ok) return;
+        store.finalizeEvent(savedEvent.id);
+      }
+    } catch (e) { await alertDialog(e.message, '無法完成'); }
+    ui.draft = null; ui.dirty = false;
+    refresh();
+  }
+
   // ---------------- 左側：活動清單 ----------------
   const events = store.events();
   const sidebar = h('div', { class: 'sidebar' },
@@ -192,6 +240,7 @@ export function renderEventsTab(container, ctx) {
         h('button', { class: 'btn primary', onclick: newEvent }, '新增活動'),
         h('button', { class: 'btn', onclick: copyEvent }, '複製設定'),
         h('button', { class: 'btn danger', onclick: deleteEvent }, '刪除')),
+      h('div', { class: 'toolbar' }, h('button', { class: 'btn', id: 'import-event', onclick: importEvent }, '匯入 Excel 班表')),
       events.length
         ? events.map((ev) => h('div', {
             class: `event-item ${ev.id === ui.selectedId && !ui.creating ? 'selected' : ''}`,
@@ -218,7 +267,7 @@ export function renderEventsTab(container, ctx) {
       h('div', { class: 'subtabs' },
         h('button', { class: `subtab ${ui.sub === 'settings' ? 'active' : ''}`, onclick: () => { ui.sub = 'settings'; refresh(); } }, '活動設定'),
         h('button', { class: `subtab ${ui.sub === 'schedule' ? 'active' : ''}`, disabled: !canSchedule, onclick: () => { ui.sub = 'schedule'; refresh(); } }, '班表')),
-      ui.sub === 'settings' ? settingsForm({ store, refresh, saveDraft, generate }) : schedulePanel({ store, ev: savedEvent, generate, clearSchedule, refresh }));
+      ui.sub === 'settings' ? settingsForm({ store, refresh, saveDraft, generate }) : schedulePanel({ store, ev: savedEvent, generate, clearSchedule, refresh, exportExcel, toggleFinal }));
   }
 
   container.replaceChildren(h('div', { class: 'split' }, sidebar, h('div', { class: 'main-panel' }, main)));
@@ -377,15 +426,18 @@ function settingsForm({ store, refresh, saveDraft, generate }) {
 }
 
 // ============================================================ 班表檢視
-function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
+function schedulePanel({ store, ev, generate, clearSchedule, refresh, exportExcel, toggleFinal }) {
   if (!ev) return h('div', { class: 'card' }, '請先儲存活動設定。');
+  const isFinal = ev.status === 'final';
   const hasAssignments = Object.keys(ev.assignments || {}).length > 0;
-  const view = buildView(store, ev);
+  const view = viewOf(store, ev);
 
   const bar = h('div', { class: 'toolbar' },
-    h('button', { class: 'btn primary', id: 'gen-btn', disabled: ui.generating || ev.status === 'final', onclick: () => generate() },
+    h('button', { class: 'btn primary', id: 'gen-btn', disabled: ui.generating || isFinal, onclick: () => generate() },
       hasAssignments ? '重新排班' : '產生班表'),
-    h('button', { class: 'btn', id: 'clear-btn', disabled: ui.generating || !hasAssignments || ev.status === 'final', onclick: () => clearSchedule() }, '清除班表'),
+    h('button', { class: 'btn', id: 'clear-btn', disabled: ui.generating || !hasAssignments || isFinal, onclick: () => clearSchedule() }, '清除班表'),
+    h('button', { class: 'btn', id: 'final-btn', disabled: ui.generating || !hasAssignments, onclick: () => toggleFinal() }, isFinal ? '解除定稿' : '定稿'),
+    h('button', { class: 'btn', id: 'export-btn', disabled: ui.generating || !hasAssignments, onclick: () => exportExcel() }, '匯出 Excel'),
     h('span', { class: 'spacer' }),
     ui.generating ? h('span', null, h('span', { class: 'spinner' }), '排班計算中，請稍候…') : null);
 
@@ -397,13 +449,8 @@ function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
   let issuesBox;
   let badCells = new Set();
   if (hasAssignments) {
-    const built = buildProblem(store, ev, { includeLocked: false });
-    const an = analyze(built.problem, assignmentsToEngine(built, ev));
-    badCells = new Set([...an.badKeys].map((key) => {
-      const [si, pid, k] = key.split('|').map(Number);
-      const s = built.slots[si];
-      return assignmentKey(s.date, s.start, pid, k);
-    }));
+    const { an, bad } = analyzeEvent(store, ev);
+    badCells = bad;
     const gen = ev.lastGeneration || { warnings: [], notes: [] };
     const isTight = (t) => (t.startsWith('本次人力吃緊') ? 0 : 1);
     const warnings = [...new Set([...(gen.warnings || []), ...an.warnings])].sort((a, b) => isTight(a) - isTight(b)); // 人力吃緊的總提示排最前面
@@ -426,6 +473,7 @@ function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
   const head = h('tr', null,
     h('th', { class: 'corner' }, dateLabel(day.date)),
     view.positions.map((p) => h('th', { colspan: p.headcount }, p.name)));
+  const candidates = new Map(view.positions.map((p) => [p.id, isFinal ? [] : candidatesFor(store, ev, p.id)]));
   let shiftIdx = 0;
   const body = day.rows.map((r) => {
     if (r.kind === 'break') {
@@ -435,13 +483,36 @@ function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
     shiftIdx += 1;
     return h('tr', { class: alt ? 'alt' : '' },
       h('td', null, `${r.start}~${r.end}`),
-      view.positions.flatMap((p) => r.cells[p.id].map((c, k) => h('td', {
-        class: `${badCells.has(assignmentKey(day.date, r.start, p.id, k)) ? 'bad' : ''} ${c && c.locked ? 'locked' : ''}`,
-        dataset: { pos: p.name },
-      }, c ? c.name : ''))));
+      view.positions.flatMap((p) => r.cells[p.id].map((c, k) => {
+        const key = assignmentKey(day.date, r.start, p.id, k);
+        const cls = `${badCells.has(key) ? 'bad' : ''} ${c && c.locked ? 'locked' : ''}`;
+        if (isFinal) return h('td', { class: cls, dataset: { pos: p.name } }, c ? c.name : '');
+        const cand = candidates.get(p.id);
+        const opts = [h('option', { value: '' }, '')];
+        for (const x of cand) opts.push(h('option', { value: String(x.id), selected: Boolean(c) && c.staffId === x.id }, x.name));
+        if (c && !cand.some((x) => x.id === c.staffId)) opts.push(h('option', { value: String(c.staffId), selected: true }, `⚠ ${c.name}`));
+        const select = h('select', {
+          dataset: { key },
+          'aria-label': `${p.name} ${r.start}`,
+          onchange: (e) => {
+            try { store.setAssignment(ev.id, key, e.target.value === '' ? null : Number(e.target.value)); }
+            catch (err) { alertDialog(err.message, '無法修改'); refresh(); }
+          },
+        }, opts);
+        const lock = h('button', {
+          class: `lockbtn ${c && c.locked ? 'on' : ''}`, title: c && c.locked ? '已鎖定（重新排班時不會更動），按一下解除' : '按一下鎖定這一格，重新排班時不會更動',
+          disabled: !c, dataset: { lock: key },
+          onclick: () => { try { store.toggleLock(ev.id, key); } catch (err) { alertDialog(err.message, '無法鎖定'); } },
+        }, c && c.locked ? '🔒' : '🔓');
+        return h('td', { class: `cell ${cls}`, dataset: { pos: p.name } }, h('div', { class: 'cellwrap' }, select, lock));
+      })));
   });
+  const legend = isFinal
+    ? h('p', { class: 'legend' }, '此活動已定稿（唯讀），顯示的是定稿當時保存的內容。')
+    : h('p', { class: 'legend' }, '每一格可用下拉選單直接換人；按鎖頭可鎖定該格，重新排班時鎖定的格子不會被更動。',
+      h('span', { class: 'sw', style: { background: '#f8cbaa' } }), '有問題', h('span', { class: 'sw', style: { boxShadow: 'inset 0 0 0 2px #e0a800' } }), '已鎖定');
   const grid = h('div', { class: 'card' },
-    dayTabs,
+    dayTabs, legend,
     h('div', { class: 'scroll-x' }, h('table', { class: 'sched', id: 'sched-table' }, h('thead', null, head), h('tbody', null, body))));
 
   // 統計
@@ -456,4 +527,3 @@ function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
 
   return h('div', null, h('div', { class: 'card' }, bar), grid, hasAssignments ? statsCard : null, issuesBox);
 }
-

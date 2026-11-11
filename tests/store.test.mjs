@@ -159,3 +159,18 @@ test('PWA：快取清單涵蓋所有程式檔，且版本號一致', () => {
     if (f && f !== 'CACHE') statSync(join(root, f)); // 列出的檔案都存在
   }
 });
+
+test('存檔暫時失敗時會自動重試，不必手動處理', async () => {
+  const st = new MemoryStorage();
+  const s = new Store(st, { debounceMs: 5, retryMs: 10 });
+  await s.open();
+  let failures = 2;
+  const orig = st.save.bind(st);
+  st.save = async (d) => { if (failures > 0) { failures -= 1; throw new Error('檔案被占用'); } return orig(d); };
+  s.addPosition('A');
+  await s.flush();
+  assert.equal(s.status.state, 'error');
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(s.status.state, 'saved');
+  assert.equal(st.file.positions[0].name, 'A');
+});

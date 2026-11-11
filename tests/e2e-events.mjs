@@ -5,7 +5,10 @@ import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { startServer } from './serve.mjs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { emptyData } from '../js/store.js';
+import { readXlsx } from '../js/xlsx.js';
+import { exportStaff, readStaffWorkbook } from '../js/excel-io.js';
 
 let chromium;
 try { ({ chromium } = await import('playwright')); } catch { ({ chromium } = await import('/opt/npm-tools/node_modules/playwright/index.mjs')); }
@@ -64,10 +67,20 @@ const page = await context.newPage();
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-const readData = () => page.evaluate(async () => {
-  const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('data1');
-  return JSON.parse(await (await (await dir.getFileHandle('排班資料.json')).getFile()).text());
-});
+const readData = async () => {
+  for (let i = 0; i < 6; i++) { // 程式剛好在寫檔時讀取會暫時失敗，稍等再讀
+    try {
+      return await page.evaluate(async () => {
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('data1');
+        return JSON.parse(await (await (await dir.getFileHandle('排班資料.json')).getFile()).text());
+      });
+    } catch (e) { await page.waitForTimeout(200); }
+  }
+  throw new Error('讀不到資料檔');
+};
+// 班表格內是下拉選單：取得每格目前選到的人名
+const cellNames = (selector) => page.locator(selector).evaluateAll((tds) =>
+  tds.map((td) => { const sel = td.querySelector('select'); return sel ? sel.selectedOptions[0].textContent : td.textContent.trim(); }));
 const waitSaved = () => page.waitForFunction(() => document.querySelector('#save-status')?.textContent.includes('已自動存檔'));
 const dialogButton = (name) => page.locator('dialog').getByRole('button', { name, exact: true });
 
@@ -109,18 +122,18 @@ await step('新增活動：填設定並產生班表（附圖情境：7:30~20:00�
   const last = await page.locator('#sched-table tbody tr').last().locator('td').first().innerText();
   assert.equal(last, '18:00~20:00'); // 最後 30 分併入上一班
   // 每格都有人
-  const cells = await page.locator('#sched-table tbody td[data-pos]').allInnerTexts();
+  const cells = await cellNames('#sched-table tbody td[data-pos]');
   assert.equal(cells.length, 40);
   assert.ok(cells.every((c) => c.trim().length > 0));
   await page.screenshot({ path: join(shots, '11-schedule.png'), fullPage: true });
 });
 
-await step('班表表格外觀：與其他內容同字體、交替底色 #99FFCC / #FFFFFF、字體較大', async () => {
+await step('班表表格外觀：與其他內容同字體、交替底色 #EBF1DE / #FFFFFF、字體較大', async () => {
   const style = (sel, prop) => page.locator(sel).first().evaluate((el, p) => getComputedStyle(el)[p], prop);
   const rows = page.locator('#sched-table tbody tr');
-  assert.equal(await rows.nth(0).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(153, 255, 204)');
+  assert.equal(await rows.nth(0).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(235, 241, 222)');
   assert.equal(await rows.nth(1).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
-  assert.equal(await rows.nth(2).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(153, 255, 204)');
+  assert.equal(await rows.nth(2).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(235, 241, 222)');
   const tableFont = await style('#sched-table td', 'fontFamily');
   assert.equal(tableFont, await style('#stats-table td', 'fontFamily'));
   assert.equal(tableFont, await style('body', 'fontFamily'));
@@ -129,7 +142,7 @@ await step('班表表格外觀：與其他內容同字體、交替底色 #99FFCC
 });
 
 await step('導播只由兩位導播擔任並 1 休 1；統計表與檢查結果正確', async () => {
-  const directors = await page.locator('#sched-table td[data-pos="導播"]').allInnerTexts();
+  const directors = await cellNames('#sched-table td[data-pos="導播"]');
   assert.ok(directors.every((n) => ['楊智森', '簡明宏'].includes(n)));
   for (let i = 1; i < directors.length; i++) assert.notEqual(directors[i], directors[i - 1]);
   const header = await page.locator('#stats-table thead th').allInnerTexts();
@@ -221,12 +234,125 @@ await step('人力吃緊時顯示「本次人力吃緊，最長連續班次為 X
   }
   await page.locator('#save-generate').click();
   await page.locator('#issues').waitFor({ timeout: 60000 });
-  assert.match(await page.locator('#issues').innerText(), /本次人力吃緊，最長連續班次為 \d+ 班/);
+  assert.match(await page.locator('#issues').innerText(), /本次人力吃緊，最長連續班次為 \d+ 班（每班需\d+人，只有\d+人可輪替）。/);
+  assert.equal(await page.locator('#issues li').first().evaluate((el) => getComputedStyle(el).color), 'rgb(255, 0, 0)'); // 提示文字為 #FF0000
   assert.match(await page.locator('#issues li').first().innerText(), /本次人力吃緊，最長連續班次為/); // 總提示排在最前面
   await page.screenshot({ path: join(shots, '14-tight.png'), fullPage: true });
 });
 
+const openEvent = async (name) => {
+  await page.locator('.event-item', { hasText: name }).first().click();
+  const tab = page.getByRole('button', { name: '班表', exact: true });
+  if (await tab.count()) await tab.click();
+  await page.locator('#sched-table').waitFor();
+};
+
+await step('手動換人：出現雙重安排的問題並標示紅色，換回後恢復正常', async () => {
+  await openEvent('冒煙測試-單日');
+  const row = page.locator('#sched-table tbody tr').first();
+  const obs = row.locator('td[data-pos="OBS/矩陣"] select');
+  const mid = row.locator('td[data-pos="中特"] select');
+  const obsName = await obs.evaluate((el) => el.selectedOptions[0].textContent);
+  const midName = await mid.evaluate((el) => el.selectedOptions[0].textContent);
+  await obs.selectOption({ label: midName }); // 同一班把同一個人排在兩個崗位
+  await page.locator('#issues').getByText('同時被安排在兩個崗位').first().waitFor();
+  assert.ok(await page.locator('#sched-table td.bad').count() >= 1);
+  await page.locator('#sched-table tbody tr').first().locator('td[data-pos="OBS/矩陣"] select').selectOption({ label: obsName });
+  await page.locator('#issues').getByText('所有班次與崗位都已排滿').waitFor();
+  assert.equal(await page.locator('#sched-table td.bad').count(), 0);
+  await waitSaved();
+});
+
+await step('鎖定格子：重新排班後鎖定的格子不變', async () => {
+  const cell = page.locator('#sched-table tbody tr').nth(1).locator('td[data-pos="導播"]');
+  const before = await cell.locator('select').evaluate((el) => el.selectedOptions[0].textContent);
+  await cell.locator('.lockbtn').click();
+  await page.locator('#sched-table tbody tr').nth(1).locator('td[data-pos="導播"].locked').waitFor();
+  await waitSaved();
+  const ev = (await readData()).events.find((e) => e.name === '冒煙測試-單日');
+  assert.ok(Object.values(ev.assignments).some((a) => a.locked === true));
+  await page.locator('#gen-btn').click();
+  await page.locator('#gen-btn', { hasText: '重新排班' }).waitFor({ timeout: 60000 });
+  await page.locator('#issues').waitFor();
+  const after = await page.locator('#sched-table tbody tr').nth(1).locator('td[data-pos="導播"] select').evaluate((el) => el.selectedOptions[0].textContent);
+  assert.equal(after, before);
+  assert.ok(await page.locator('#sched-table tbody tr').nth(1).locator('td[data-pos="導播"].locked').count() === 1);
+  await page.locator('#sched-table tbody tr').nth(1).locator('td[data-pos="導播"] .lockbtn').click(); // 解除鎖定
+});
+
+await step('定稿：唯讀、保存快照；解除定稿後可再編輯', async () => {
+  await page.locator('#final-btn').click();
+  await dialogButton('定稿').click();
+  await page.locator('.event-item', { hasText: '冒煙測試-單日' }).locator('.status-chip.final').waitFor();
+  assert.equal(await page.locator('#sched-table select').count(), 0);
+  assert.equal(await page.locator('#gen-btn').isDisabled(), true);
+  await page.screenshot({ path: join(shots, '15-final.png'), fullPage: true });
+  await waitSaved();
+  const ev = (await readData()).events.find((e) => e.name === '冒煙測試-單日');
+  assert.equal(ev.status, 'final');
+  assert.ok(ev.snapshot && ev.snapshot.view.days.length === 1);
+  await page.getByRole('button', { name: '活動設定', exact: true }).click();
+  assert.equal(await page.locator('#ev-name').isDisabled(), true);
+  await page.getByRole('button', { name: '班表', exact: true }).click();
+  await page.locator('#final-btn').click();
+  await dialogButton('解除定稿').click();
+  await page.locator('#sched-table select').first().waitFor();
+});
+
+await step('匯出 Excel：版面、字體、交替底色與統計表', async () => {
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#export-btn').click()]);
+  assert.equal(download.suggestedFilename(), '冒煙測試-單日.xlsx');
+  const path = join(shots, 'export.xlsx');
+  await download.saveAs(path);
+  const sheets = await readXlsx(new Uint8Array(readFileSync(path)));
+  assert.deepEqual(sheets.map((s) => s.name), ['20261107', '人員班次統計', '_data']);
+  const day = sheets[0];
+  assert.equal(day.get(1, 1), '11月07日');
+  assert.deepEqual([2, 3, 4, 5, 6].map((c) => day.get(1, c)), ['導播', 'OBS/矩陣', '中特', '坤錄', '乾錄']);
+  assert.equal(day.get(9, 1), '18:00~20:00');
+  assert.equal(sheets[1].get(4, 1) ?? sheets[1].get(3, 1), '總計');
+});
+
+await step('匯入 Excel 班表：還原成新活動、內容相同', async () => {
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#import-event').click()]);
+  await fc.setFiles(join(shots, 'export.xlsx'));
+  await page.locator('dialog').getByText('已匯入並建立新的活動').waitFor();
+  await dialogButton('知道了').click();
+  await page.locator('.event-item', { hasText: '冒煙測試-單日 (2)' }).waitFor();
+  await page.locator('#sched-table').waitFor();
+  assert.equal(await page.locator('#sched-table tbody tr').count(), 8);
+  await waitSaved();
+  const data = await readData();
+  const a = data.events.find((e) => e.name === '冒煙測試-單日');
+  const b = data.events.find((e) => e.name === '冒煙測試-單日 (2)');
+  const flat = (e) => Object.fromEntries(Object.entries(e.assignments).map(([k, v]) => [k, v.staffId]));
+  assert.deepEqual(flat(b), flat(a));
+  await page.getByRole('button', { name: '刪除', exact: true }).first().click();
+  await dialogButton('刪除').click();
+  await page.waitForFunction(() => !document.body.innerText.includes('冒煙測試-單日 (2)'));
+});
+
+await step('人員名單 Excel：匯出、匯入（新增人員與新崗位）', async () => {
+  await page.getByRole('button', { name: '人員管理' }).click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#staff-export').click()]);
+  const p1 = join(shots, 'staff.xlsx');
+  await download.saveAs(p1);
+  const rows = await readStaffWorkbook(new Uint8Array(readFileSync(p1)));
+  assert.equal(rows.length, 12);
+  const p2 = join(shots, 'staff-new.xlsx');
+  writeFileSync(p2, exportStaff([{ name: '新同學', positions: ['導播', '新崗位'], note: '測試' }]));
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#staff-import').click()]);
+  await fc.setFiles(p2);
+  await dialogButton('匯入').click();
+  await page.locator('dialog').getByText('新增 1 位').waitFor();
+  await dialogButton('知道了').click();
+  await page.locator('tbody tr', { hasText: '新同學' }).waitFor();
+  assert.equal(await page.locator('tbody tr').count(), 13);
+  await page.getByRole('button', { name: '活動專案' }).click();
+});
+
 await step('未儲存就切換活動會先詢問', async () => {
+  await page.locator('.event-item', { hasText: '冒煙測試-人力吃緊' }).click();
   await page.getByRole('button', { name: '活動設定', exact: true }).click();
   await page.locator('#ev-name').fill('改到一半還沒存');
   await page.locator('.event-item', { hasText: '冒煙測試-單日' }).click();

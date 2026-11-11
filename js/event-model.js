@@ -1,7 +1,7 @@
 // 活動（專案）的資料規則：驗證、班次版面、轉成排班引擎的輸入、班表檢視與統計。
 // 不依賴瀏覽器與 Store，可在 Node 測試。
 import { buildDayLayout, parseHM, fmtHM, timelinePositions, dateLabel } from './timeslots.js';
-import { seatKey } from './engine.js';
+import { seatKey, analyze } from './engine.js';
 
 export const STATUS_LABELS = { draft: '草稿', scheduled: '已排班', final: '已定稿' };
 export const DEDICATED_CHOICES = [
@@ -206,4 +206,45 @@ export function viewStats(view) {
     }
   }
   return { names, dates, table };
+}
+
+/** 活動設定（寫入匯出檔的隱藏資料，匯入時可還原成專案） */
+export function buildMeta(store, ev) {
+  const order = new Map(store.positions({ includeInactive: true }).map((p, i) => [p.id, i]));
+  const positions = [...ev.positions].filter((p) => store.getPosition(p.positionId))
+    .sort((a, b) => (order.get(a.positionId) ?? 0) - (order.get(b.positionId) ?? 0))
+    .map((p) => ({ name: store.getPosition(p.positionId).name, headcount: p.headcount, dedicated: p.dedicated ?? null }));
+  const attendees = [...ev.staffIds].sort((a, b) => a - b).map((id) => store.getStaff(id)).filter(Boolean)
+    .map((s) => ({ name: s.name, positions: s.positionIds.map((pid) => store.getPosition(pid)).filter(Boolean).map((p) => p.name) }));
+  return {
+    name: ev.name, note: ev.note || '', shiftMinutes: ev.shiftMinutes, mergeThreshold: ev.mergeThreshold ?? 0.5,
+    days: sortedDays(ev).map((d) => ({ date: d.date, start: d.start, end: d.end, breaks: (d.breaks || []).map((b) => ({ label: b.label, start: b.start, end: b.end })) })),
+    positions, attendees,
+  };
+}
+
+/** 已定稿的活動使用快照（之後人員或崗位改名也不影響），否則使用即時資料 */
+export function viewOf(store, ev) {
+  return ev.status === 'final' && ev.snapshot ? ev.snapshot.view : buildView(store, ev);
+}
+export function metaOf(store, ev) {
+  return ev.status === 'final' && ev.snapshot ? ev.snapshot.meta : buildMeta(store, ev);
+}
+
+/** 分析目前班表：硬性問題（errors）與提醒（warnings） */
+export function analyzeEvent(store, ev) {
+  const ctx = buildProblem(store, ev, { includeLocked: false });
+  const an = analyze(ctx.problem, assignmentsToEngine(ctx, ev));
+  const bad = new Set([...an.badKeys].map((key) => {
+    const [si, pid, k] = key.split('|').map(Number);
+    const s = ctx.slots[si];
+    return assignmentKey(s.date, s.start, pid, k);
+  }));
+  return { ctx, an, bad };
+}
+
+/** 某崗位在這個活動中可以選的人員（出席者且具備該崗位資格） */
+export function candidatesFor(store, ev, positionId) {
+  return [...ev.staffIds].sort((a, b) => a - b).map((id) => store.getStaff(id))
+    .filter((s) => s && s.positionIds.includes(positionId)).map((s) => ({ id: s.id, name: s.name }));
 }

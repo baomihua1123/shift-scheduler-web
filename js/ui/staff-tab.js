@@ -1,6 +1,8 @@
 // 「人員管理」頁籤
 import { h } from '../util.js';
 import { openDialog, confirmDialog, alertDialog } from './dialog.js';
+import { exportStaff, readStaffWorkbook } from '../excel-io.js';
+import { downloadBytes, pickFile, XLSX_MIME } from './files.js';
 
 const state = { selectedId: null, showInactive: false, search: '' };
 
@@ -109,6 +111,29 @@ export function renderStaffTab(container, { store }) {
     }
   }
 
+  async function exportList() {
+    const rows = store.staffList().map((s) => ({ name: s.name, positions: s.positionIds.map((id) => store.positionName(id)), note: s.note }));
+    downloadBytes('人員名單.xlsx', exportStaff(rows), XLSX_MIME);
+  }
+  function downloadTemplate() {
+    const names = store.positions().map((p) => p.name).slice(0, 2);
+    downloadBytes('人員名單範本.xlsx', exportStaff([{ name: '王小明（範例，請刪除）', positions: names.length ? names : ['導播'], note: '' }]), XLSX_MIME);
+  }
+  async function importList() {
+    const file = await pickFile('.xlsx');
+    if (!file) return;
+    let rows;
+    try { rows = await readStaffWorkbook(new Uint8Array(await file.arrayBuffer())); }
+    catch (e) { await alertDialog(`無法讀取檔案：${e.message}`, '匯入失敗'); return; }
+    if (!rows.length) { await alertDialog('檔案中沒有可匯入的人員。', '沒有資料'); return; }
+    const ok = await confirmDialog(`共 ${rows.length} 位人員。同名者會更新其適用崗位，確定匯入嗎？`, { title: '確認匯入', okLabel: '匯入' });
+    if (!ok) return;
+    try {
+      const rep = store.importStaffRows(rows);
+      await alertDialog(`新增 ${rep.added} 位、更新 ${rep.updated} 位。` + (rep.warnings.length ? `\n\n${rep.warnings.slice(0, 15).join('\n')}` : ''), '匯入完成');
+    } catch (e) { await alertDialog(e.message, '匯入失敗'); }
+  }
+
   addBtn.onclick = add;
   editBtn.onclick = edit;
   delBtn.onclick = del;
@@ -127,7 +152,11 @@ export function renderStaffTab(container, { store }) {
     h('div', { class: 'card' },
       h('h2', null, '人員管理'),
       h('p', { class: 'muted small' }, '新增人員並勾選適用的崗位（可複選）。人員資料存放在您選擇的資料夾，所有活動都可以使用。'),
-      h('div', { class: 'toolbar' }, addBtn, editBtn, delBtn, restoreBtn, h('span', { class: 'spacer' }), search,
+      h('div', { class: 'toolbar' }, addBtn, editBtn, delBtn, restoreBtn, h('span', { class: 'spacer' }),
+        h('button', { class: 'btn', id: 'staff-import', onclick: importList }, '從 Excel 匯入名單'),
+        h('button', { class: 'btn', id: 'staff-export', onclick: exportList }, '匯出名單'),
+        h('button', { class: 'btn', onclick: downloadTemplate }, '下載匯入範本')),
+      h('div', { class: 'toolbar' }, search,
         h('label', { class: 'small' }, showInactive, ' 顯示已停用的人員')),
       h('table', { class: 'grid' },
         h('thead', null, h('tr', null, h('th', null, '姓名'), h('th', null, '適用崗位'), h('th', null, '備註'), h('th', null, '狀態'))),
