@@ -106,7 +106,7 @@ test('鎖定的座位會被保留', () => {
 test('人力吃緊時給出提示', () => {
   const r = solve(problem({ directors: 1, others: 5 }), OPT);
   assert.equal(r.ok, true, r.errors.join(';'));
-  assert.ok(r.warnings.some((w) => w.includes('人力吃緊')));
+  assert.ok(r.warnings.some((w) => /^本次人力吃緊，最長連續班次為 \d+ 班/.test(w)), r.warnings.join(' | '));
 });
 
 test('分析：偵測資格不符與漏排', () => {

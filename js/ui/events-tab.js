@@ -243,12 +243,8 @@ function settingsForm({ store, refresh, saveDraft, generate }) {
         h('input', {
           type: 'number', id: 'ev-shift', min: 5, max: 720, step: 5, value: d.shiftMinutes,
           oninput: (e) => edit(() => { d.shiftMinutes = Number(e.target.value); }),
-        })),
-      h('label', { class: 'field' }, h('span', null, '休息分佈'),
-        h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 400 } },
-          h('input', { type: 'checkbox', id: 'ev-avoid', checked: d.avoidConsecutive, onchange: (e) => edit(() => { d.avoidConsecutive = e.target.checked; }) }),
-          '盡量避免連續上班（做 1 休 1）'))),
-    h('p', { class: 'muted small' }, '全活動的班次時長一致。每天（或休息前後各段）最後剩餘的時間，不到一班的一半就併入上一班，否則單獨成一班。'));
+        }))),
+    h('p', { class: 'muted small' }, '全活動的班次時長一致。每天（或休息前後各段）最後剩餘的時間，不到一班的一半就併入上一班，否則單獨成一班。排班時系統固定會盡量讓每個人做 1 休 1、避免連續上班；人力吃緊無法做到時，會在班表頁提醒。'));
 
   // ---- 工作日
   const dayRows = d.days.map((day, i) => h('tr', null,
@@ -409,7 +405,8 @@ function schedulePanel({ store, ev, generate, clearSchedule, refresh }) {
       return assignmentKey(s.date, s.start, pid, k);
     }));
     const gen = ev.lastGeneration || { warnings: [], notes: [] };
-    const warnings = [...new Set([...(gen.warnings || []), ...an.warnings])];
+    const isTight = (t) => (t.startsWith('本次人力吃緊') ? 0 : 1);
+    const warnings = [...new Set([...(gen.warnings || []), ...an.warnings])].sort((a, b) => isTight(a) - isTight(b)); // 人力吃緊的總提示排最前面
     const items = [];
     if (!an.errors.length && !warnings.length) items.push(h('li', { class: 'ok' }, '✔ 所有班次與崗位都已排滿，且人員皆符合適用崗位。'));
     for (const t of an.errors) items.push(h('li', { class: 'err' }, `✖ ${t}`));

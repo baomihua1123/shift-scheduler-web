@@ -1,6 +1,6 @@
 // Service Worker：讓程式安裝後可離線開啟，並在有新版本時通知使用者。
 // 每次更新程式時，請同時修改這裡的 VERSION 與 js/version.js（兩邊必須一致）。
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CACHE = `shift-scheduler-${VERSION}`;
 const ASSETS = [
   './',
@@ -50,6 +50,7 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (url.searchParams.has('nocache')) return; // 「檢查更新」要直接向網站確認，不使用快取
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req, { ignoreSearch: true });

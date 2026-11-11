@@ -26,7 +26,7 @@ export function daysBetween(isoA, isoB) {
 export function newEventDraft(todayIso) {
   return {
     id: null, name: '', note: '', status: 'draft',
-    shiftMinutes: 90, mergeThreshold: 0.5, avoidConsecutive: true,
+    shiftMinutes: 90, mergeThreshold: 0.5,
     days: [{ date: todayIso, start: '09:00', end: '18:00', breaks: [] }],
     positions: [], staffIds: [], assignments: {}, lastGeneration: null, copiedFrom: null,
   };
@@ -134,7 +134,7 @@ export function buildProblem(store, ev, { includeLocked = true } = {}) {
     slots: slots.map((s) => ({ day: s.dayIndex, tpos: s.tpos, label: s.label })),
     dayLengths: days.map((d) => d.length),
     dayLabels: days.map((d) => dateLabel(d.date)),
-    positions, staff, locked, avoidConsecutive: Boolean(ev.avoidConsecutive),
+    positions, staff, locked, avoidConsecutive: true, // 「盡量不連續執勤」固定啟用
   };
   return { problem, slots, slotIndex };
 }

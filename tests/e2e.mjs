@@ -251,6 +251,18 @@ await step('PWA：已註冊 Service Worker，離線也能開啟並讀到資料',
   await context.setOffline(false);
 });
 
+await step('檢查更新：顯示網站上的版本，能分辨「已是最新」與「網站有新版」', async () => {
+  await page.getByRole('button', { name: '設定', exact: true }).click();
+  await page.getByRole('button', { name: '檢查更新' }).click();
+  await page.locator('dialog').getByText(/目前已是最新版本（\d+\.\d+\.\d+）/).waitFor();
+  await page.getByRole('button', { name: '知道了' }).click();
+  await page.route(/js\/version\.js\?nocache=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: "export const APP_VERSION = '9.9.9';" }));
+  await page.getByRole('button', { name: '檢查更新' }).click();
+  await page.locator('dialog').getByText(/網站上的版本是 9\.9\.9/).waitFor();
+  await page.getByRole('button', { name: '知道了' }).click();
+  await page.unroute(/js\/version\.js\?nocache=/);
+});
+
 await step('資料損毀時，可用最新備份還原（壞檔會被另存）', async () => {
   await context.addInitScript(() => { /* 保持假 picker */ });
   await writeOpfs(page, 'data1/排班資料.json', '{這不是正確的JSON');

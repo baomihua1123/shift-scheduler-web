@@ -309,7 +309,7 @@ export class Store {
     const base = {
       name: String(draft.name).trim(), note: String(draft.note || '').trim(),
       shiftMinutes: Number(draft.shiftMinutes), mergeThreshold: draft.mergeThreshold ?? 0.5,
-      avoidConsecutive: Boolean(draft.avoidConsecutive), days, positions, staffIds,
+      days, positions, staffIds,
     };
 
     if (draft.id === null || draft.id === undefined) {
@@ -366,7 +366,7 @@ export class Store {
     const offset = startDate && days.length ? daysBetween(days[0].date, startDate) : 0;
     return this.saveEvent({
       id: null, name: newName, note: src.note, shiftMinutes: src.shiftMinutes, mergeThreshold: src.mergeThreshold,
-      avoidConsecutive: src.avoidConsecutive, copiedFrom: src.id,
+      copiedFrom: src.id,
       days: days.map((d) => ({ date: addDays(d.date, offset), start: d.start, end: d.end, breaks: d.breaks.map((b) => ({ ...b })) })),
       positions: src.positions.map((p) => ({ ...p })),
       staffIds: [...src.staffIds],

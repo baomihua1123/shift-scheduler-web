@@ -185,3 +185,26 @@ test('版面：休息列與班次列', async () => {
   assert.equal(slots.length, 5);
   assert.notEqual(layoutSignature(d), layoutSignature({ ...d, shiftMinutes: 60 }));
 });
+
+test('「盡量不連續執勤」固定啟用：活動沒有這個開關，建出的問題一律啟用', async () => {
+  const w = await seed();
+  const draft = draftFor(w);
+  assert.equal('avoidConsecutive' in newEventDraft('2026-11-07'), false);
+  const id = w.s.saveEvent(draft).id;
+  assert.equal('avoidConsecutive' in w.s.getEvent(id), false);
+  assert.equal(buildProblem(w.s, w.s.getEvent(id)).problem.avoidConsecutive, true);
+  // 舊資料裡若殘留 avoidConsecutive:false，也會被忽略
+  w.s.getEvent(id).avoidConsecutive = false;
+  assert.equal(buildProblem(w.s, w.s.getEvent(id)).problem.avoidConsecutive, true);
+});
+
+test('人力吃緊時，排班後的提示文字', async () => {
+  const w = await seed();
+  const draft = draftFor(w);
+  draft.staffIds = [w.staff['楊智森'], ...['簡淑婷', '宋帛蓓', '陳右青', '陳佑如', '劉念彤'].map((n) => w.staff[n])];
+  const id = w.s.saveEvent(draft).id;
+  const ctx = buildProblem(w.s, w.s.getEvent(id));
+  const r = solve(ctx.problem, { seed: 2, timeLimit: 3 });
+  assert.equal(r.ok, true, r.errors.join(';'));
+  assert.ok(r.warnings.some((x) => x.startsWith('本次人力吃緊，最長連續班次為')), r.warnings.join(' | '));
+});

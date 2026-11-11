@@ -267,13 +267,28 @@ function showUpdateBanner() {
 }
 
 async function checkUpdate() {
-  if (!swReg) { await alertDialog('目前無法檢查更新（可能沒有網路，或瀏覽器不支援）。'); return; }
+  // 直接向網站確認目前的版本號（不經過快取），才能分辨「網站還沒更新」與「這台電腦還沒更新」
+  let remote = null;
   try {
-    await swReg.update();
-    if (swReg.waiting) { pendingUpdate = true; showUpdateBanner(); await alertDialog('有新版本可以使用，請按上方的「立即更新」。'); }
-    else await alertDialog(`目前已是最新版本（${APP_VERSION}）。`, '檢查更新');
-  } catch (e) {
-    await alertDialog('無法檢查更新，請確認網路連線後再試。');
+    const res = await fetch(`js/version.js?nocache=${Date.now()}`, { cache: 'no-store' });
+    const m = (await res.text()).match(/APP_VERSION\s*=\s*'([^']+)'/);
+    remote = m ? m[1] : null;
+  } catch (e) { remote = null; }
+  if (swReg) { try { await swReg.update(); } catch (e) { /* 忽略 */ } }
+  if (!remote) {
+    await alertDialog('無法連線到網站，所以無法確認最新版本。請確認網路連線後再試。', '檢查更新');
+    return;
+  }
+  if (remote === APP_VERSION) {
+    await alertDialog(`目前已是最新版本（${APP_VERSION}）。`, '檢查更新');
+    return;
+  }
+  if (swReg && swReg.waiting) {
+    pendingUpdate = true; showUpdateBanner();
+    await alertDialog(`網站上有新版本 ${remote}（目前是 ${APP_VERSION}）。請按畫面上方的「立即更新」。`, '檢查更新');
+  } else {
+    await alertDialog(`網站上的版本是 ${remote}，目前使用的是 ${APP_VERSION}。新版正在下載中，請稍候幾秒再按一次「檢查更新」；` +
+      '若一直沒有出現，請把程式所有視窗關閉後重新開啟。', '檢查更新');
   }
 }
 

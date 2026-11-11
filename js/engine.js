@@ -386,7 +386,7 @@ export function solve(problemIn, optionsIn = {}) {
     const longest = Math.max(...members.map((m) => an.maxRun[m.id]));
     if (problem.avoidConsecutive && longest >= 2) {
       if (members.length < 2 * seatsPerSlot) {
-        res.warnings.push(`${g.name}人力吃緊（每班需 ${seatsPerSlot} 人，只有 ${members.length} 人可輪替），無法完全做到 1 休 1，最長連續 ${longest} 班。`);
+        res.warnings.push(`本次人力吃緊，最長連續班次為 ${longest} 班（${g.name}：每班需 ${seatsPerSlot} 人，只有 ${members.length} 人可輪替，無法完全做到 1 休 1）。`);
       } else if (longest >= 3) {
         res.warnings.push(`${g.name}仍有連續 ${longest} 班的情形，可再按一次「重新排班」。`);
       }

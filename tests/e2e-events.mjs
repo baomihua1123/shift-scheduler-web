@@ -94,6 +94,7 @@ await step('載入預先放好的人員與崗位', async () => {
 
 await step('新增活動：填設定並產生班表（附圖情境：7:30~20:00、每班 90 分）', async () => {
   await page.getByRole('button', { name: '新增活動' }).click();
+  assert.equal(await page.locator('#ev-avoid').count(), 0); // 「盡量不連續執勤」已固定，沒有開關
   await page.locator('#ev-name').fill('冒煙測試-單日');
   await page.locator('#ev-shift').fill('90');
   await fillDay(0, { date: '2026-11-07', start: '07:30', end: '20:00' });
@@ -112,6 +113,19 @@ await step('新增活動：填設定並產生班表（附圖情境：7:30~20:00�
   assert.equal(cells.length, 40);
   assert.ok(cells.every((c) => c.trim().length > 0));
   await page.screenshot({ path: join(shots, '11-schedule.png'), fullPage: true });
+});
+
+await step('班表表格外觀：與其他內容同字體、交替底色 #99FFCC / #FFFFFF、字體較大', async () => {
+  const style = (sel, prop) => page.locator(sel).first().evaluate((el, p) => getComputedStyle(el)[p], prop);
+  const rows = page.locator('#sched-table tbody tr');
+  assert.equal(await rows.nth(0).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(153, 255, 204)');
+  assert.equal(await rows.nth(1).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
+  assert.equal(await rows.nth(2).locator('td').nth(1).evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(153, 255, 204)');
+  const tableFont = await style('#sched-table td', 'fontFamily');
+  assert.equal(tableFont, await style('#stats-table td', 'fontFamily'));
+  assert.equal(tableFont, await style('body', 'fontFamily'));
+  assert.ok(!/標楷|DFKai|Kaiti/i.test(tableFont));
+  assert.equal(await style('#sched-table td', 'fontSize'), '19px');
 });
 
 await step('導播只由兩位導播擔任並 1 休 1；統計表與檢查結果正確', async () => {
@@ -196,7 +210,24 @@ await step('人員不足時給出清楚的錯誤（沒有人會導播）', async
   await dialogButton('知道了').click();
 });
 
+await step('人力吃緊時顯示「本次人力吃緊，最長連續班次為 X」', async () => {
+  await page.getByRole('button', { name: '新增活動' }).click();
+  await page.locator('#ev-name').fill('冒煙測試-人力吃緊');
+  await page.locator('#ev-shift').fill('90');
+  await fillDay(0, { date: '2027-02-01', start: '09:00', end: '15:00' });
+  await selectAllPositions();
+  for (const n of ['楊智森', '簡淑婷', '宋帛蓓', '陳右青', '陳佑如', '劉念彤']) {
+    await page.locator('#attendees label').filter({ hasText: n }).locator('input').check();
+  }
+  await page.locator('#save-generate').click();
+  await page.locator('#issues').waitFor({ timeout: 60000 });
+  assert.match(await page.locator('#issues').innerText(), /本次人力吃緊，最長連續班次為 \d+ 班/);
+  assert.match(await page.locator('#issues li').first().innerText(), /本次人力吃緊，最長連續班次為/); // 總提示排在最前面
+  await page.screenshot({ path: join(shots, '14-tight.png'), fullPage: true });
+});
+
 await step('未儲存就切換活動會先詢問', async () => {
+  await page.getByRole('button', { name: '活動設定', exact: true }).click();
   await page.locator('#ev-name').fill('改到一半還沒存');
   await page.locator('.event-item', { hasText: '冒煙測試-單日' }).click();
   await page.locator('dialog').getByText('還沒有儲存').waitFor();

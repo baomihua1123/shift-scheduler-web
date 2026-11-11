@@ -109,9 +109,9 @@ table.form-table th { font-size: 14px; color: var(--muted); font-weight: 600; }
 .daytab.active { background: var(--green); color: #fff; border-color: var(--green); }
 .scroll-x { overflow-x: auto; }
 table.sched { border-collapse: collapse; background: #fff; min-width: 480px; }
-table.sched th, table.sched td { border: 1px solid #222; padding: 8px 14px; text-align: center; font-family: "DFKai-SB", "標楷體", "Kaiti TC", serif; font-size: 17px; min-width: 96px; }
+table.sched th, table.sched td { border: 1px solid #222; padding: 9px 16px; text-align: center; font-size: 19px; min-width: 104px; background: #ffffff; }
 table.sched th.corner { text-decoration: underline; }
-table.sched tr.alt td { background: #c5e0b4; }
+table.sched tr.alt td { background: #99ffcc; }
 table.sched tr.break td { background: #d9d9d9; }
 table.sched td.bad { background: #f8cbaa !important; }
 table.sched td.locked { box-shadow: inset 0 0 0 2px #e0a800; }
